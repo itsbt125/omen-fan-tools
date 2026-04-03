@@ -119,6 +119,8 @@ echo "[4/4] Installing daemon and service..."
 cp "$SCRIPT_DIR/omen-fand.py" /usr/local/bin/omen-fand
 cp "$SCRIPT_DIR/omen-fan" /usr/local/bin/omen-fan
 chmod 755 /usr/local/bin/omen-fand /usr/local/bin/omen-fan
+# Fix SELinux context if applicable
+command -v restorecon &>/dev/null && restorecon /usr/local/bin/omen-fand /usr/local/bin/omen-fan
 
 cat > /etc/systemd/system/omen-fand.service <<'EOF'
 [Unit]
