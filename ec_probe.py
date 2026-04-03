@@ -203,7 +203,7 @@ def main():
     identify_interesting_registers(regs)
 
     # Phase 2: Save raw dump to file
-    dump_file = "/home/brandon/omen-fan-tools/ec_dump.txt"
+    dump_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ec_dump.txt")
     with open(dump_file, 'w') as f:
         f.write(f"# EC Register Dump - HP Omen 16-xf0xxx (8BCA)\n")
         f.write(f"# Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
