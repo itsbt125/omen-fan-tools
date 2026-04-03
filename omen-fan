@@ -1,0 +1,62 @@
+#!/bin/bash
+# omen-fan - Quick fan control helper
+# Usage:
+#   omen-fan status        Show current fan state
+#   omen-fan max           Set fans to max and hold daemon
+#   omen-fan auto          Return to auto and release daemon
+#   omen-fan hold          Pause daemon curve control
+#   omen-fan resume        Resume daemon curve control
+#   omen-fan set N [M]     Set fan0=N fan1=M (M defaults to N) and hold daemon
+
+FANS="/sys/module/hp_wmi_fan_ctrl/fans"
+HOLD="/run/omen-fand-hold"
+
+hold_daemon() {
+    touch "$HOLD"
+    # Signal daemon if running
+    PID=$(systemctl show -p MainPID omen-fand 2>/dev/null | cut -d= -f2)
+    [ "$PID" -gt 0 ] 2>/dev/null && kill -USR1 "$PID" 2>/dev/null
+}
+
+release_daemon() {
+    rm -f "$HOLD"
+    PID=$(systemctl show -p MainPID omen-fand 2>/dev/null | cut -d= -f2)
+    [ "$PID" -gt 0 ] 2>/dev/null && kill -USR2 "$PID" 2>/dev/null
+}
+
+case "${1:-status}" in
+    status)
+        cat "$FANS" 2>/dev/null || echo "Module not loaded"
+        [ -f "$HOLD" ] && echo "daemon: HELD" || echo "daemon: active"
+        ;;
+    max)
+        hold_daemon
+        echo "max" > "$FANS"
+        cat "$FANS"
+        ;;
+    auto)
+        echo "auto" > "$FANS"
+        release_daemon
+        cat "$FANS"
+        ;;
+    hold)
+        hold_daemon
+        echo "Daemon paused"
+        cat "$FANS"
+        ;;
+    resume)
+        release_daemon
+        echo "Daemon resumed"
+        ;;
+    set)
+        S0="${2:?Usage: omen-fan set SPEED0 [SPEED1]}"
+        S1="${3:-$S0}"
+        hold_daemon
+        echo "$S0 $S1" > "$FANS"
+        cat "$FANS"
+        ;;
+    *)
+        echo "Usage: omen-fan {status|max|auto|hold|resume|set N [M]}"
+        exit 1
+        ;;
+esac

@@ -34,10 +34,11 @@ DEFAULT_CURVE = [
     (70, 60),   # 70C: ~6000 RPM
     (75, 70),   # 75C: ~7000 RPM
     (80, 80),   # 80C: ~8000 RPM
-    (85, 255),  # 85C+: MAX (prevent thermal lid sensor trips)
+    (85, 255),  # 85C+: MAX
 ]
 
 FAN_CTRL_PATH = "/sys/module/hp_wmi_fan_ctrl/fans"
+HOLD_FILE = "/run/omen-fand-hold"
 POLL_INTERVAL = 3.0       # seconds between temp checks
 HYSTERESIS = 3            # degrees C before stepping down
 SMOOTHING_WINDOW = 3      # number of readings to average
@@ -154,6 +155,23 @@ def set_fan_auto():
         return False
 
 
+def is_held():
+    """Check if daemon should hold (pause curve control)."""
+    return os.path.exists(HOLD_FILE)
+
+
+def set_hold(enable):
+    """Enable or disable hold mode."""
+    if enable:
+        with open(HOLD_FILE, 'w') as f:
+            f.write(str(int(time.time())))
+    else:
+        try:
+            os.unlink(HOLD_FILE)
+        except FileNotFoundError:
+            pass
+
+
 def load_config(path):
     """Load config from a JSON file."""
     with open(path) as f:
@@ -236,14 +254,31 @@ def main():
     print(f"  Mode: {'DRY RUN' if args.dry_run else 'LIVE'}")
     print()
 
-    # Graceful shutdown
+    # Graceful shutdown and hold toggle
     running = True
+    held = is_held()
+
     def handle_signal(sig, frame):
         nonlocal running
         print(f"\nReceived signal {sig}, shutting down...")
         running = False
+
+    def handle_hold(sig, frame):
+        nonlocal held
+        set_hold(True)
+        held = True
+        print(f"[{time.strftime('%H:%M:%S')}] HOLD enabled (SIGUSR1) - curve paused, manual control active")
+
+    def handle_resume(sig, frame):
+        nonlocal held
+        set_hold(False)
+        held = False
+        print(f"[{time.strftime('%H:%M:%S')}] HOLD released (SIGUSR2) - curve control resumed")
+
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGUSR1, handle_hold)
+    signal.signal(signal.SIGUSR2, handle_resume)
 
     # Smoothing buffer
     temp_history = []
@@ -251,6 +286,15 @@ def main():
 
     try:
         while running:
+            # Check hold state (file or signal)
+            held = is_held()
+            if held:
+                if args.verbose:
+                    status = read_fan_status() if not args.dry_run else "dry-run"
+                    print(f"[{time.strftime('%H:%M:%S')}] HELD - skipping curve | {status}")
+                time.sleep(poll_interval)
+                continue
+
             # Read temperatures
             temps = {}
             for key, src in sources.items():
