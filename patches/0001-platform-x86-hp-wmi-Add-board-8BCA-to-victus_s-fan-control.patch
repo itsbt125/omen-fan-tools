@@ -1,0 +1,34 @@
+From: Brandon <brandon@btea.dev>
+Subject: [PATCH] platform/x86: hp-wmi: Add board 8BCA to victus_s thermal profile boards
+
+The HP Omen 16-xf0xxx (DMI board name "8BCA") uses the Victus-S WMI
+fan protocol (queries 0x2D/0x2E) but is not listed in the
+victus_s_thermal_profile_boards array. Without this, the driver falls
+back to legacy Omen queries (0x11, 0x26) which return incorrect data
+on this board.
+
+Testing confirmed:
+  - Query 0x2D (VICTUS_S_FAN_SPEED_GET): returns correct RPM values
+  - Query 0x2E (FAN_SPEED_SET): successfully sets fan speeds
+  - Query 0x11 (legacy FAN_SPEED_GET): returns bogus zeros
+  - Query 0x26 (legacy FAN_SPEED_MAX_GET): fails with error 12292
+
+Tested on HP Omen 16-xf0xxx, Fedora 43, kernel 6.19.10.
+
+Signed-off-by: Brandon <brandon@btea.dev>
+---
+ drivers/platform/x86/hp/hp-wmi.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/platform/x86/hp/hp-wmi.c b/drivers/platform/x86/hp/hp-wmi.c
+index abc123..def456 100644
+--- a/drivers/platform/x86/hp/hp-wmi.c
++++ b/drivers/platform/x86/hp/hp-wmi.c
+@@ -103,6 +103,7 @@ static const char * const victus_s_thermal_profile_boards[] = {
+ 	"8BBE", "8BD4", "8BD5",
+ 	"8C78", "8C99", "8C9C",
+ 	"8D41",
++	"8BCA",
+ };
+
+ enum hp_wmi_radio {
