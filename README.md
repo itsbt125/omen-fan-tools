@@ -2,6 +2,8 @@
 
 Fan control for HP Omen 16-xf0xxx (Board 8BCA) on Linux.
 
+First time using Claude Code, really impressed.
+
 ## The Problem
 
 The HP Omen 16-xf0xxx uses the Victus-S WMI fan protocol (queries `0x2D`/`0x2E`), but the mainline `hp_wmi` kernel driver doesn't include board `8BCA` in its `victus_s_thermal_profile_boards` list. This means:
