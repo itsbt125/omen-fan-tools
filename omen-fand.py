@@ -235,7 +235,9 @@ def main():
     # Check kernel module
     if not args.dry_run and not os.path.exists(FAN_CTRL_PATH):
         print(f"ERROR: {FAN_CTRL_PATH} not found.", file=sys.stderr)
-        print("Load the kernel module: sudo insmod hp_wmi_fan_ctrl.ko", file=sys.stderr)
+        print("Try loading the module: sudo modprobe hp_wmi_fan_ctrl", file=sys.stderr)
+        print("If that fails after a kernel update, rebuild/install for this kernel:", file=sys.stderr)
+        print("  sudo /path/to/omen-fan-tools/install.sh $(uname -r)", file=sys.stderr)
         sys.exit(1)
 
     # Find temperature sources
@@ -256,7 +258,6 @@ def main():
 
     # Graceful shutdown and hold toggle
     running = True
-    held = is_held()
 
     def handle_signal(sig, frame):
         nonlocal running
@@ -264,15 +265,11 @@ def main():
         running = False
 
     def handle_hold(sig, frame):
-        nonlocal held
         set_hold(True)
-        held = True
         print(f"[{time.strftime('%H:%M:%S')}] HOLD enabled (SIGUSR1) - curve paused, manual control active")
 
     def handle_resume(sig, frame):
-        nonlocal held
         set_hold(False)
-        held = False
         print(f"[{time.strftime('%H:%M:%S')}] HOLD released (SIGUSR2) - curve control resumed")
 
     signal.signal(signal.SIGTERM, handle_signal)
@@ -326,10 +323,10 @@ def main():
                     target_speed = last_speed  # hold current speed
 
             # Apply
-            status = read_fan_status() if not args.dry_run else "dry-run"
             timestamp = time.strftime("%H:%M:%S")
 
             if args.verbose or args.dry_run or args.once:
+                status = read_fan_status() if not args.dry_run else "dry-run"
                 temp_str = " ".join(f"{k}={v:.1f}C" for k, v in temps.items())
                 print(f"[{timestamp}] {temp_str} avg={avg_temp:.1f}C -> speed={target_speed} "
                       f"(last={last_speed}) | {status}")

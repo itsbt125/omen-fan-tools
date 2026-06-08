@@ -17,8 +17,6 @@ The HP Omen 16-xf0xxx uses the Victus-S WMI fan protocol (queries `0x2D`/`0x2E`)
 1. **`hp_wmi_fan_ctrl.ko`** — Standalone kernel module that exposes WMI fan control via sysfs
 2. **`omen-fand.py`** — Temperature-based fan curve daemon with hold/resume support
 3. **`omen-fan`** — CLI helper for quick manual control
-4. **`hp_wmi_fan_test.ko`** — Diagnostic module for probing WMI query support
-5. **`ec_probe.py`** — EC register dumper for hardware analysis
 
 ## Quick Start
 
@@ -39,7 +37,10 @@ sudo ./install.sh
 The install script:
 - Builds the kernel module (uses DKMS if available for auto-rebuild on kernel updates)
 - Installs the daemon and CLI helper to `/usr/local/bin/`
-- Enables the `omen-fand` systemd service
+- Enables the `omen-fand` service (systemd or OpenRC, whichever is detected)
+- Detects an existing install and asks whether to reinstall or uninstall
+
+To remove everything: `sudo ./install.sh --uninstall`
 
 ### CLI Helper
 
@@ -104,7 +105,7 @@ kill -USR2 $(pidof omen-fand)  # resume
 
 ## How We Found This
 
-The `hp_wmi_fan_test.ko` module probes all fan-related WMI queries. Results for board 8BCA:
+Probing all fan-related WMI queries on board 8BCA gave these results:
 
 | Query | ID   | Result |
 |-------|------|--------|
@@ -121,7 +122,7 @@ This confirmed the board uses the Victus-S fan protocol despite being branded as
 
 - **Tested on:** HP Omen 16-xf0xxx, Board ID 8BCA, Fedora 43, kernel 6.19.10
 - **Should work on:** Any Linux kernel 6.x with headers available
-- **Other boards:** HP Omen/Victus boards missing from the upstream driver may benefit — use `hp_wmi_fan_test.ko` to check
+- **Other boards:** HP Omen/Victus boards missing from the upstream driver's `victus_s_thermal_profile_boards` list likely have the same issue
 
 ## Kernel Updates
 

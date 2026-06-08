@@ -2,11 +2,14 @@
 Description=HP Omen Fan Curve Daemon
 After=multi-user.target
 Wants=multi-user.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
 
 [Service]
 Type=simple
-ExecStartPre=/sbin/modprobe hp_wmi
-ExecStartPre=/sbin/modprobe hp_wmi_fan_ctrl
+# Keep boot clean if the custom module is missing for this kernel.
+ExecStartPre=-/sbin/modprobe hp_wmi_fan_ctrl
+ExecCondition=/usr/bin/test -e /sys/module/hp_wmi_fan_ctrl/fans
 ExecStart=/usr/local/bin/omen-fand --verbose
 ExecStopPost=/bin/sh -c 'echo auto > /sys/module/hp_wmi_fan_ctrl/fans 2>/dev/null || true'
 Restart=on-failure

@@ -12,9 +12,6 @@
 Module.symvers
 modules.order
 
-# EC dumps (contain machine-specific data)
-ec_dump.txt
-
 # Editor
 *~
 *.swp

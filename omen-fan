@@ -1,62 +1,119 @@
 #!/bin/bash
 # omen-fan - Quick fan control helper
+#
 # Usage:
-#   omen-fan status        Show current fan state
-#   omen-fan max           Set fans to max and hold daemon
-#   omen-fan auto          Return to auto and release daemon
-#   omen-fan hold          Pause daemon curve control
+#   omen-fan [status]      Show current fan state (default)
+#   omen-fan max           Set fans to max and pause the daemon
+#   omen-fan auto          Return fans to automatic and resume the daemon
+#   omen-fan hold          Pause daemon curve control (keep current speed)
 #   omen-fan resume        Resume daemon curve control
-#   omen-fan set N [M]     Set fan0=N fan1=M (M defaults to N) and hold daemon
+#   omen-fan set N [M]     Set fan0=N fan1=M (M defaults to N); value*100 ~= RPM
 
 FANS="/sys/module/hp_wmi_fan_ctrl/fans"
 HOLD="/run/omen-fand-hold"
 
-hold_daemon() {
-    touch "$HOLD"
-    # Signal daemon if running
-    PID=$(systemctl show -p MainPID omen-fand 2>/dev/null | cut -d= -f2)
-    [ "$PID" -gt 0 ] 2>/dev/null && kill -USR1 "$PID" 2>/dev/null
+if [ -t 1 ] && command -v tput &>/dev/null && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+    BOLD="$(tput bold)"; RESET="$(tput sgr0)"
+    GREEN="$(tput setaf 2)"; YELLOW="$(tput setaf 3)"; RED="$(tput setaf 1)"; CYAN="$(tput setaf 6)"
+else
+    BOLD=""; RESET=""; GREEN=""; YELLOW=""; RED=""; CYAN=""
+fi
+
+usage() {
+    sed -n '2,10p' "$0" | sed 's/^# \?//'
+    exit "${1:-0}"
 }
 
-release_daemon() {
-    rm -f "$HOLD"
-    PID=$(systemctl show -p MainPID omen-fand 2>/dev/null | cut -d= -f2)
-    [ "$PID" -gt 0 ] 2>/dev/null && kill -USR2 "$PID" 2>/dev/null
+daemon_pid() {
+    if command -v systemctl &>/dev/null; then
+        systemctl show -p MainPID omen-fand 2>/dev/null | cut -d= -f2
+    else
+        cat /run/omen-fand.pid 2>/dev/null
+    fi
+}
+
+signal_daemon() {
+    PID=$(daemon_pid)
+    [ "$PID" -gt 0 ] 2>/dev/null && kill -"$1" "$PID" 2>/dev/null
+}
+
+hold_daemon()    { touch "$HOLD"; signal_daemon USR1; }
+release_daemon() { rm -f "$HOLD"; signal_daemon USR2; }
+
+# Pull a "key=value" field out of the raw sysfs line (e.g. "fan0_rpm=2700 mode=manual")
+field() { echo "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; }
+
+require_module() {
+    [ -e "$FANS" ] && return 0
+    echo "${RED}hp_wmi_fan_ctrl module not loaded.${RESET} Try: sudo modprobe hp_wmi_fan_ctrl"
+    exit 1
+}
+
+print_status() {
+    require_module
+    local raw mode fan0 fan1 set0 set1 mode_color daemon_state daemon_color
+
+    raw="$(cat "$FANS" 2>/dev/null)"
+    mode="$(field "$raw" mode)"
+    fan0="$(field "$raw" fan0_rpm)"
+    fan1="$(field "$raw" fan1_rpm)"
+    set0="$(field "$raw" set0)"
+    set1="$(field "$raw" set1)"
+
+    [ "$mode" = "manual" ] && mode_color="$YELLOW" || mode_color="$GREEN"
+    if [ -f "$HOLD" ]; then
+        daemon_state="held"; daemon_color="$YELLOW"
+    else
+        daemon_state="active"; daemon_color="$GREEN"
+    fi
+
+    echo "${BOLD}Mode${RESET}    ${mode_color}${mode}${RESET}"
+    if [ -n "$set0" ]; then
+        printf "${BOLD}Fan 0${RESET}   %s RPM  ${CYAN}(target %s)${RESET}\n" "${fan0:-?}" "$set0"
+        printf "${BOLD}Fan 1${RESET}   %s RPM  ${CYAN}(target %s)${RESET}\n" "${fan1:-?}" "$set1"
+    else
+        printf "${BOLD}Fan 0${RESET}   %s RPM\n" "${fan0:-?}"
+        printf "${BOLD}Fan 1${RESET}   %s RPM\n" "${fan1:-?}"
+    fi
+    echo "${BOLD}Daemon${RESET}  ${daemon_color}${daemon_state}${RESET}"
 }
 
 case "${1:-status}" in
+    -h|--help)
+        usage 0
+        ;;
     status)
-        cat "$FANS" 2>/dev/null || echo "Module not loaded"
-        [ -f "$HOLD" ] && echo "daemon: HELD" || echo "daemon: active"
+        print_status
         ;;
     max)
+        require_module
         hold_daemon
-        echo "max" > "$FANS"
-        cat "$FANS"
+        echo max > "$FANS"
+        echo "${BOLD}Fans set to max${RESET} (daemon paused)"
         ;;
     auto)
-        echo "auto" > "$FANS"
+        require_module
+        echo auto > "$FANS"
         release_daemon
-        cat "$FANS"
+        echo "${BOLD}Fans set to auto${RESET} (daemon resumed)"
         ;;
     hold)
         hold_daemon
-        echo "Daemon paused"
-        cat "$FANS"
+        echo "${YELLOW}Daemon held${RESET} - curve control paused, current speed kept"
         ;;
     resume)
         release_daemon
-        echo "Daemon resumed"
+        echo "${GREEN}Daemon resumed${RESET} - curve control active"
         ;;
     set)
-        S0="${2:?Usage: omen-fan set SPEED0 [SPEED1]}"
+        require_module
+        S0="${2:?Usage: omen-fan set SPEED0 [SPEED1]   (1-255, ~RPM = value * 100)}"
         S1="${3:-$S0}"
         hold_daemon
         echo "$S0 $S1" > "$FANS"
-        cat "$FANS"
+        echo "${BOLD}Fans set to ${S0} ${S1}${RESET} (~$((S0 * 100))/$((S1 * 100)) RPM, daemon paused)"
         ;;
     *)
-        echo "Usage: omen-fan {status|max|auto|hold|resume|set N [M]}"
-        exit 1
+        usage 1
         ;;
 esac

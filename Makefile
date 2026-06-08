@@ -1,21 +1,17 @@
-obj-m += hp_wmi_fan_test.o hp_wmi_fan_ctrl.o
+obj-m += hp_wmi_fan_ctrl.o
 
 KDIR := /lib/modules/$(shell uname -r)/build
+MDIR := $(CURDIR)
 
 all:
-	make -C $(KDIR) M=$(PWD) modules
+	$(MAKE) -C $(KDIR) M=$(MDIR) modules
 
 clean:
-	make -C $(KDIR) M=$(PWD) clean
+	$(MAKE) -C $(KDIR) M=$(MDIR) clean
 
 test: all
 	@echo ""
 	@echo "=== Build successful ==="
-	@echo ""
-	@echo "Fan test (read-only probing):"
-	@echo "  sudo insmod hp_wmi_fan_test.ko"
-	@echo "  sudo dmesg | grep hp_wmi_fan_test"
-	@echo "  sudo rmmod hp_wmi_fan_test"
 	@echo ""
 	@echo "Fan control module:"
 	@echo "  sudo insmod hp_wmi_fan_ctrl.ko"

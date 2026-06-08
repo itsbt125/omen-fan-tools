@@ -1,0 +1,29 @@
+#!/sbin/openrc-run
+# HP Omen Fan Curve Daemon
+
+description="HP Omen fan curve daemon"
+command="/usr/local/bin/omen-fand"
+command_args="--verbose"
+command_user="root"
+supervisor="supervise-daemon"
+respawn_max=3
+respawn_period=300
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+    need localmount
+    after modules
+}
+
+start_pre() {
+    /sbin/modprobe hp_wmi_fan_ctrl 2>/dev/null
+    [ -e /sys/module/hp_wmi_fan_ctrl/fans ] || {
+        eerror "hp_wmi_fan_ctrl module not loaded - see omen-fan-tools README"
+        return 1
+    }
+}
+
+stop_post() {
+    echo auto > /sys/module/hp_wmi_fan_ctrl/fans 2>/dev/null
+    return 0
+}
