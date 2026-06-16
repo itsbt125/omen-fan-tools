@@ -36,8 +36,9 @@ sudo ./install.sh
 
 The install script:
 - Builds the kernel module (uses DKMS if available for auto-rebuild on kernel updates)
+- Configures the module to load at boot (`/etc/modules-load.d/`)
 - Installs the daemon and CLI helper to `/usr/local/bin/`
-- Enables the `omen-fand` service (systemd or OpenRC, whichever is detected)
+- Enables the `omen-fand` service (systemd, OpenRC, or runit, whichever is detected)
 - Detects an existing install and asks whether to reinstall or uninstall
 
 To remove everything: `sudo ./install.sh --uninstall`
@@ -47,7 +48,7 @@ To remove everything: `sudo ./install.sh --uninstall`
 ```bash
 sudo omen-fan status        # show current fan state
 sudo omen-fan max           # max fans, pause daemon
-sudo omen-fan set 50 50     # set both fans to ~5000 RPM, pause daemon
+sudo omen-fan set 50 50     # set both fans to ~5000 RPM (0-100), pause daemon
 sudo omen-fan auto          # return to auto, resume daemon
 sudo omen-fan hold          # pause daemon (keep current speed)
 sudo omen-fan resume        # resume daemon curve control
@@ -59,10 +60,12 @@ sudo omen-fan resume        # resume daemon curve control
 # Read current state
 cat /sys/module/hp_wmi_fan_ctrl/fans
 
-# Set fan speeds (value * 100 = approximate RPM)
+# Set fan speeds (0-100; value * 100 = approximate RPM, clamped by the EC
+# to the hardware max of ~7100 RPM. The EC ignores values far above its
+# limit -- e.g. 255 -- so the module clamps writes above 100.)
 echo "30 30" | sudo tee /sys/module/hp_wmi_fan_ctrl/fans   # ~3000 RPM
 echo "55 55" | sudo tee /sys/module/hp_wmi_fan_ctrl/fans   # ~5500 RPM
-echo "max"   | sudo tee /sys/module/hp_wmi_fan_ctrl/fans   # full blast
+echo "max"   | sudo tee /sys/module/hp_wmi_fan_ctrl/fans   # full blast (sends 100)
 echo "auto"  | sudo tee /sys/module/hp_wmi_fan_ctrl/fans   # firmware control
 ```
 
@@ -78,8 +81,11 @@ The default curve is aggressive:
 | 65       | 50        | 5000 |
 | 70       | 60        | 6000 |
 | 75       | 70        | 7000 |
-| 80       | 80        | 8000 |
-| 85+      | 255       | MAX  |
+| 80       | 80        | 8000 (clamped to hardware max) |
+| 85+      | 100       | MAX  |
+
+Fan values are 0–100. The EC clamps to the real hardware maximum (~7100 RPM
+on 8BCA) but *ignores* values far out of range, so 255 must not be used.
 
 Custom curves via JSON config:
 

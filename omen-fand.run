@@ -1,0 +1,16 @@
+#!/bin/sh
+# HP Omen Fan Curve Daemon - runit run script (Void Linux et al.)
+# Installed as /etc/sv/omen-fand/run
+
+# Send stderr to stdout so runit's logger (if any) captures everything.
+exec 2>&1
+
+/sbin/modprobe hp_wmi_fan_ctrl 2>/dev/null
+if [ ! -e /sys/module/hp_wmi_fan_ctrl/fans ]; then
+    echo "hp_wmi_fan_ctrl module not loaded - see omen-fan-tools README" >&2
+    # Throttle the respawn loop so a missing module doesn't busy-spin runsv.
+    sleep 5
+    exit 1
+fi
+
+exec /usr/local/bin/omen-fand --verbose

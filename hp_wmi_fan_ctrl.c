@@ -2,7 +2,7 @@
  * hp_wmi_fan_ctrl.c - WMI fan control module for HP Omen 16-xf0xxx (Board 8BCA)
  *
  * Provides direct fan speed control via WMI query 0x2E and reading via 0x2D.
- * Exposes sysfs interface at /sys/module/hp_wmi_fan_ctrl/parameters/
+ * Exposes sysfs interface at /sys/module/hp_wmi_fan_ctrl/fans
  *
  * Build: make
  * Load:  sudo insmod hp_wmi_fan_ctrl.ko
@@ -10,8 +10,10 @@
  *   # Read current fan speeds (RPM)
  *   cat /sys/module/hp_wmi_fan_ctrl/fans
  *
- *   # Set fan speeds (0 = auto, 1-255 = manual speed)
- *   # Values are in firmware units: RPM = value * 100
+ *   # Set fan speeds (0 = auto, 1-100 = manual speed)
+ *   # Values are in firmware units: RPM = value * 100, and the EC clamps
+ *   # to the hardware maximum (~7100 RPM on 8BCA). The EC silently ignores
+ *   # out-of-range values like 0xFF, so writes above 100 are clamped to 100.
  *   echo "30 30" > /sys/module/hp_wmi_fan_ctrl/fans       # both fans ~3000 RPM
  *   echo "0 0"   > /sys/module/hp_wmi_fan_ctrl/fans        # return to auto
  *   echo "auto"  > /sys/module/hp_wmi_fan_ctrl/fans         # return to auto
@@ -41,6 +43,13 @@
 
 #define HEARTBEAT_INTERVAL_SEC  90
 #define FAN_COUNT               2
+
+/*
+ * Highest speed value the firmware accepts. The EC clamps this to the
+ * real hardware maximum but silently ignores values much above it
+ * (0xFF in particular), so "max" must not send 0xFF.
+ */
+#define FAN_SPEED_MAX           100
 
 static DEFINE_MUTEX(fan_lock);
 static u8 current_fan_speed[FAN_COUNT];  /* 0 = auto, >0 = manual */
@@ -109,9 +118,11 @@ static int wmi_query(int query_id, void *indata, int insize, void *outdata, int 
 
 	bret = (struct bios_return *)obj->buffer.pointer;
 	if (bret->return_code) {
-		int rc = bret->return_code;
+		/* Firmware codes are positive; don't leak them as byte counts */
+		pr_debug("hp_wmi_fan_ctrl: query 0x%x failed: firmware code %u\n",
+			 query_id, bret->return_code);
 		kfree(obj);
-		return rc;
+		return -EIO;
 	}
 
 	if (outdata && outsize > 0) {
@@ -186,7 +197,7 @@ static ssize_t fans_show(struct kobject *kobj, struct kobj_attribute *attr, char
 
 	ret = fan_get_speeds(&rpm0, &rpm1);
 	if (ret)
-		return sysfs_emit(buf, "error: %d\n", ret);
+		return ret;
 
 	mutex_lock(&fan_lock);
 	ret = sysfs_emit(buf, "fan0_rpm=%d fan1_rpm=%d mode=%s",
@@ -221,15 +232,14 @@ static ssize_t fans_store(struct kobject *kobj, struct kobj_attribute *attr,
 		cancel_delayed_work(&heartbeat_work);
 		pr_info("hp_wmi_fan_ctrl: set to auto mode\n");
 	} else if (sysfs_streq(buf, "max")) {
-		/* Maximum speed — use 0xFF for both */
-		ret = fan_set_speeds(0xFF, 0xFF);
+		ret = fan_set_speeds(FAN_SPEED_MAX, FAN_SPEED_MAX);
 		if (ret) {
 			mutex_unlock(&fan_lock);
 			return ret;
 		}
 		manual_mode = true;
-		current_fan_speed[0] = 0xFF;
-		current_fan_speed[1] = 0xFF;
+		current_fan_speed[0] = FAN_SPEED_MAX;
+		current_fan_speed[1] = FAN_SPEED_MAX;
 		schedule_delayed_work(&heartbeat_work,
 				      msecs_to_jiffies(HEARTBEAT_INTERVAL_SEC * 1000));
 		pr_info("hp_wmi_fan_ctrl: set to max mode\n");
@@ -238,6 +248,9 @@ static ssize_t fans_store(struct kobject *kobj, struct kobj_attribute *attr,
 			mutex_unlock(&fan_lock);
 			return -EINVAL;
 		}
+		/* The EC ignores values above its limit instead of clamping */
+		speed0 = min_t(unsigned int, speed0, FAN_SPEED_MAX);
+		speed1 = min_t(unsigned int, speed1, FAN_SPEED_MAX);
 		ret = fan_set_speeds(speed0, speed1);
 		if (ret) {
 			mutex_unlock(&fan_lock);
@@ -299,7 +312,8 @@ static int __init hp_wmi_fan_ctrl_init(void)
 
 static void __exit hp_wmi_fan_ctrl_exit(void)
 {
-	/* Cancel heartbeat and return fans to auto */
+	/* Remove sysfs first so no write can re-arm the heartbeat mid-exit */
+	sysfs_remove_file(fan_kobj, &fans_attr.attr);
 	cancel_delayed_work_sync(&heartbeat_work);
 
 	mutex_lock(&fan_lock);
@@ -310,7 +324,6 @@ static void __exit hp_wmi_fan_ctrl_exit(void)
 	manual_mode = false;
 	mutex_unlock(&fan_lock);
 
-	sysfs_remove_file(fan_kobj, &fans_attr.attr);
 	pr_info("hp_wmi_fan_ctrl: unloaded\n");
 }
 

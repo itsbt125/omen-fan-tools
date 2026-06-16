@@ -32,6 +32,7 @@ is_installed() {
     [ -f /usr/local/bin/omen-fand ] ||
     [ -f /etc/systemd/system/omen-fand.service ] ||
     [ -f /etc/init.d/omen-fand ] ||
+    [ -d /etc/sv/omen-fand ] ||
     [ -f /etc/kernel/install.d/99-omen-fan.install ] ||
     dkms status "$DKMS_NAME/$DKMS_VER" 2>/dev/null | grep -q "$DKMS_NAME"
 }
@@ -50,8 +51,18 @@ uninstall() {
         rc-update del omen-fand default 2>/dev/null || true
         rm -f /etc/init.d/omen-fand
     fi
+    if command -v sv &>/dev/null && [ -d /etc/sv/omen-fand ]; then
+        # Take the service down and remove the "enabled" symlink before the
+        # service dir itself, so runsvdir stops supervising it cleanly.
+        for svc_dir in /var/service /etc/runit/runsvdir/default /service; do
+            [ -L "$svc_dir/omen-fand" ] && rm -f "$svc_dir/omen-fand"
+        done
+        sv down omen-fand 2>/dev/null || true
+        rm -rf /etc/sv/omen-fand
+    fi
 
     rm -f /usr/local/bin/omen-fand /usr/local/bin/omen-fan /run/omen-fand-hold
+    rm -f "/etc/modules-load.d/$MODULE_NAME.conf"
 
     rmmod "$MODULE_NAME" 2>/dev/null || true
 
@@ -62,7 +73,8 @@ uninstall() {
 
     rm -f /etc/kernel/install.d/99-omen-fan.install
 
-    for ko in /lib/modules/*/extra/$MODULE_NAME.ko; do
+    # DKMS installs compressed (.ko.xz/.ko.zst) on some distros - match all
+    for ko in /lib/modules/*/extra/$MODULE_NAME.ko*; do
         [ -e "$ko" ] || continue
         rm -f "$ko"
         depmod -a "$(basename "$(dirname "$(dirname "$ko")")")"
@@ -237,6 +249,11 @@ fi
 RUNNING_KERNEL=false
 [ "$KVER" = "$(uname -r)" ] && RUNNING_KERNEL=true
 
+# Load the module at every boot via systemd-modules-load/OpenRC modules;
+# the service's ExecCondition alone runs too early to do the modprobe itself.
+mkdir -p /etc/modules-load.d
+echo "$MODULE_NAME" > "/etc/modules-load.d/$MODULE_NAME.conf"
+
 # Load module if installing for running kernel
 if $RUNNING_KERNEL; then
     step "[3/4] Loading module..."
@@ -269,10 +286,40 @@ elif command -v rc-update &>/dev/null; then
     rc-update add omen-fand default
     $RUNNING_KERNEL && rc-service omen-fand restart
     SERVICE_STATE="$(rc-service omen-fand status 2>/dev/null | awk '{print $NF}' || echo 'unknown')"
+elif command -v sv &>/dev/null && [ -d /etc/sv ]; then
+    INIT_SYSTEM="runit"
+    mkdir -p /etc/sv/omen-fand
+    cp "$SCRIPT_DIR/omen-fand.run" /etc/sv/omen-fand/run
+    cp "$SCRIPT_DIR/omen-fand.finish" /etc/sv/omen-fand/finish
+    chmod 755 /etc/sv/omen-fand/run /etc/sv/omen-fand/finish
+    command -v restorecon &>/dev/null && restorecon -R /etc/sv/omen-fand
+
+    # Enable by symlinking into the active runsvdir. /var/service is the Void
+    # default; fall back to other common layouts if it's absent.
+    SVDIR=""
+    for d in /var/service /etc/runit/runsvdir/default /service; do
+        if [ -d "$d" ]; then SVDIR="$d"; break; fi
+    done
+    if [ -n "$SVDIR" ]; then
+        ln -sf /etc/sv/omen-fand "$SVDIR/omen-fand"
+        # runsvdir scans on an interval; give it a moment to spawn runsv.
+        if $RUNNING_KERNEL; then
+            for _ in $(seq 1 10); do
+                [ -e "$SVDIR/omen-fand/supervise/ok" ] && break
+                sleep 1
+            done
+            sv restart omen-fand 2>/dev/null || true
+        fi
+        SERVICE_STATE="$(sv status omen-fand 2>/dev/null | awk '{print $1}' | tr -d ':' || echo 'unknown')"
+    else
+        warn "No runit service directory found (looked in /var/service, /etc/runit/runsvdir/default, /service)."
+        echo "  Symlink it manually: ln -s /etc/sv/omen-fand /var/service/omen-fand"
+        SERVICE_STATE="installed (not enabled)"
+    fi
 else
     INIT_SYSTEM="none"
     SERVICE_STATE="not installed"
-    warn "Neither systemd nor OpenRC detected."
+    warn "No supported init system detected (systemd, OpenRC, runit)."
     echo "  Run /usr/local/bin/omen-fand manually or wire it into your init system."
 fi
 
@@ -280,7 +327,7 @@ echo ""
 heading "Done"
 echo "Module:  $MODULE_NAME ($( $USE_DKMS && echo 'DKMS - auto-rebuilds on kernel updates' || echo 'manual - hook installed for auto-rebuild' ))"
 echo "Daemon:  /usr/local/bin/omen-fand"
-state_color="$GREEN"; [ "$SERVICE_STATE" = "active" ] || [ "$SERVICE_STATE" = "started" ] || state_color="$YELLOW"
+state_color="$GREEN"; case "$SERVICE_STATE" in active|started|run) ;; *) state_color="$YELLOW" ;; esac
 echo "Service: omen-fand ($INIT_SYSTEM, ${state_color}${SERVICE_STATE}${RESET})"
 if $USE_DKMS; then
     echo ""

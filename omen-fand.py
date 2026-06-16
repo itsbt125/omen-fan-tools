@@ -24,7 +24,9 @@ import time
 
 # --- Default fan curve ---
 # Each entry: (temp_celsius, fan_speed_value)
-# fan_speed_value: 0 = auto/off, 1-255 = manual (RPM = value * 100)
+# fan_speed_value: 0 = auto/off, 1-100 = manual (RPM = value * 100, EC clamps
+# to the hardware max, ~7100 RPM on 8BCA). The EC ignores values far above
+# its limit (e.g. 255), so the curve must stay within 0-100.
 # Interpolation between points. Below min = first value. Above max = last value.
 DEFAULT_CURVE = [
     (35, 20),   # 35C+: ~2000 RPM baseline (never fully off)
@@ -33,8 +35,8 @@ DEFAULT_CURVE = [
     (65, 50),   # 65C: ~5000 RPM
     (70, 60),   # 70C: ~6000 RPM
     (75, 70),   # 75C: ~7000 RPM
-    (80, 80),   # 80C: ~8000 RPM
-    (85, 255),  # 85C+: MAX
+    (80, 80),   # 80C: ~8000 RPM (clamped to hardware max)
+    (85, 100),  # 85C+: MAX
 ]
 
 FAN_CTRL_PATH = "/sys/module/hp_wmi_fan_ctrl/fans"
@@ -179,7 +181,8 @@ def load_config(path):
 
     result = {}
     if "curve" in cfg:
-        result["curve"] = [(int(t), int(s)) for t, s in cfg["curve"]]
+        # Clamp speeds to 0-100: the EC ignores values above its limit
+        result["curve"] = [(int(t), max(0, min(100, int(s)))) for t, s in cfg["curve"]]
     if "poll_interval" in cfg:
         result["poll_interval"] = float(cfg["poll_interval"])
     if "hysteresis" in cfg:
@@ -196,7 +199,7 @@ def write_default_config(path):
         "poll_interval": POLL_INTERVAL,
         "hysteresis": HYSTERESIS,
         "smoothing_window": SMOOTHING_WINDOW,
-        "_comment": "curve: [[temp_C, fan_value], ...]. fan_value 0=auto, 1-255=manual (RPM~=value*100)"
+        "_comment": "curve: [[temp_C, fan_value], ...]. fan_value 0=auto, 1-100=manual (RPM~=value*100, clamped to hardware max)"
     }
     with open(path, 'w') as f:
         json.dump(cfg, f, indent=2)

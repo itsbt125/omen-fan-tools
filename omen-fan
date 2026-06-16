@@ -7,7 +7,7 @@
 #   omen-fan auto          Return fans to automatic and resume the daemon
 #   omen-fan hold          Pause daemon curve control (keep current speed)
 #   omen-fan resume        Resume daemon curve control
-#   omen-fan set N [M]     Set fan0=N fan1=M (M defaults to N); value*100 ~= RPM
+#   omen-fan set N [M]     Set fan0=N fan1=M (M defaults to N); 0-100, value*100 ~= RPM
 
 FANS="/sys/module/hp_wmi_fan_ctrl/fans"
 HOLD="/run/omen-fand-hold"
@@ -28,7 +28,9 @@ daemon_pid() {
     if command -v systemctl &>/dev/null; then
         systemctl show -p MainPID omen-fand 2>/dev/null | cut -d= -f2
     else
-        cat /run/omen-fand.pid 2>/dev/null
+        # /run/omen-fand.pid holds the supervise-daemon PID under OpenRC,
+        # not the daemon itself, so find the python process directly
+        pgrep -o -f /usr/local/bin/omen-fand 2>/dev/null
     fi
 }
 
@@ -107,8 +109,18 @@ case "${1:-status}" in
         ;;
     set)
         require_module
-        S0="${2:?Usage: omen-fan set SPEED0 [SPEED1]   (1-255, ~RPM = value * 100)}"
+        S0="${2:?Usage: omen-fan set SPEED0 [SPEED1]   (0-100, ~RPM = value * 100)}"
         S1="${3:-$S0}"
+        case "$S0$S1" in
+            ''|*[!0-9]*)
+                echo "${RED}Speeds must be numbers 0-100.${RESET}" >&2
+                exit 1
+                ;;
+        esac
+        if [ "$S0" -gt 100 ] || [ "$S1" -gt 100 ]; then
+            echo "${RED}Speeds must be 0-100${RESET} (the EC ignores higher values; 100 = hardware max)" >&2
+            exit 1
+        fi
         hold_daemon
         echo "$S0 $S1" > "$FANS"
         echo "${BOLD}Fans set to ${S0} ${S1}${RESET} (~$((S0 * 100))/$((S1 * 100)) RPM, daemon paused)"

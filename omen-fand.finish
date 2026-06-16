@@ -1,0 +1,5 @@
+#!/bin/sh
+# HP Omen Fan Curve Daemon - runit finish script
+# Installed as /etc/sv/omen-fand/finish
+# Hand fan control back to the EC when the service stops.
+echo auto > /sys/module/hp_wmi_fan_ctrl/fans 2>/dev/null || true
